@@ -1,10 +1,16 @@
-var request = require("request"),
-	commander = require("commander"),
-	config = require("./config.json"),
-	currentTrack;
+'use strict';
 
-function fetchLastPlayedTrack(username, callback) {
-	var url = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks" +
+const request = require("request");
+const config = require("./config.json");
+let currentTrack = null;
+let lastTs = Math.floor(new Date().getTime() / 1000) - 60*60;
+
+const Slack = require('slack-node');
+let slack = new Slack(config.slack.token);
+
+function fetchLastPlayedTrack() {
+	let username = config.lastfm.username;
+	let url = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks" +
 			"&user=" + username +
 			"&api_key=" + config.lastfm.apiKey +
 			"&format=json",
@@ -26,11 +32,7 @@ function fetchLastPlayedTrack(username, callback) {
 						track = track[0];
 					}
 
-					if (callback) {
-						callback(track);
-					} else {
-						console.log(track);
-					}
+					checkIfTrackIsPlayingAndNew(track);
 				} else if (data.error && data.message) {
 					console.error(data.message)
 				} else {
@@ -38,7 +40,7 @@ function fetchLastPlayedTrack(username, callback) {
 				}
 
 				setTimeout(function () {
-					fetchLastPlayedTrack(username, checkIfTrackIsPlayingAndNew);
+					fetchLastPlayedTrack();
 				}, 10000);
 			} catch (e) {
 				console.error(e, body);
@@ -48,52 +50,105 @@ function fetchLastPlayedTrack(username, callback) {
 }
 
 function checkIfTrackIsPlayingAndNew(track) {
-	var trackName;
+	let trackName;
+	// console.dir(track);
 
 	if (track.hasOwnProperty("@attr") &&
 		track["@attr"].nowplaying &&
 		"true" == track["@attr"].nowplaying) {
 		trackName = "\"" + track.name + "\" by " + track.artist["#text"];
 
+		if (currentTrack == null) currentTrack = trackName;
 		if (currentTrack != trackName) {
 			console.log(trackName);
-			if (!commander.quiet) {
-				sendMessageToSlack(trackName);
-			}
+			setTopicOfSlackChannel(trackName);
 			currentTrack = trackName;
 		}
 	}
 }
 
-function sendMessageToSlack(message) {
-	var payload = {
-			text: message,
-			username: config.slack.username,
-			icon_emoji: config.slack.icon
-		},
-		url = config.slack.url;
+function removeSelfMessages(onlyTopic, callback) {
+	let param = {
+		channel: config.slack.channel,
+		oldest: lastTs
+	};
+	slack.api('channels.history', param, (err, res)=>{
+		if (err||!res.ok) {
+			console.error(err||res);
+			if (callback) callback(err||res);
+			return;
+		}
+		let msgs = res.messages.filter(msg=>{
+			if (onlyTopic && !msg.topic) return false;
+			if (msg.bot_id) {
+				if (msg.bot_id != config.slack.bot_id) return false;
+			}
+			else {
+				if (!msg.user || msg.user != config.slack.bot_user_id) return false;
+			}
+			return true;
+		});
+		// console.dir(res.messages);
+		// console.dir(msgs);
+		removeMessages(msgs, callback);
+	});
+}
 
-		request.post({
-			url: url,
-			form: { payload: JSON.stringify(payload) }
-		}, function(error, response, body) {
-			if (error) {
-				console.error(error);
-			} else if (response.statusCode != 200) {
-				console.error("Unhandled response type:", response.statusCode);
+function removeMessages(messages, callback) {
+	if (messages.length == 0) {
+		if (callback) callback(null);
+		return;
+	}
+	let msg = messages.shift();
+	let param = {
+		channel: config.slack.channel,
+		ts: msg.ts,
+		as_user: true
+	};
+	lastTs = Math.max(lastTs, msg.ts);
+	console.log(`chat.delete ${msg.ts}`);
+	slack.api('chat.delete', param, (err, res)=>{
+		if (err||!res.ok) {
+			console.error(err||res);
+			if (callback) callback(err||res);
+			return;
+		}
+		removeMessages(messages, callback);
+	});
+}
+
+function setTopicOfSlackChannel(message) {
+	let param = {
+		channel: config.slack.channel,
+		topic: `Last.fm: ${message}`
+	};
+	// console.dir(param);
+	removeSelfMessages(true, ()=>{
+		console.log(`channels.setTopic ${param.topic}`);
+		slack.api('channels.setTopic', param, (err, res)=>{
+			if (err||!res.ok) {
+				console.error(err||res);
+				return;
 			}
 		});
+	});
 }
 
-// Parse args
-commander
-	.version("1.0.0")
-	.usage("[options] <username>")
-	.option("-q, --quiet", "Don't send message to Slack")
-	.parse(process.argv);
-
-if (!commander.args.length) {
-	commander.help();
+function sendMessageToSlack(message) {
+	let msg = {
+		as_user: true,
+		username: config.slack.username,
+		text: message,
+		channel: config.slack.channel,
+		link_names: false
+	};
+	// console.dir(msg);
+	slack.api('chat.postMessage', msg, (err, res)=>{
+		if (err||!res.ok) {
+			console.error(err||res);
+			return;
+		}
+	});
 }
 
-fetchLastPlayedTrack(commander.args[0], checkIfTrackIsPlayingAndNew);
+removeSelfMessages(false, fetchLastPlayedTrack);
