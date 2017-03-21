@@ -1,10 +1,14 @@
 {
 	"lastfm": {
+		"username": "YOUR_USER_NAME_HERE",
 		"apiKey": "YOUR_API_KEY_HERE"
 	},
 	"slack": {
-		"url": "https://hooks.slack.com/services/LOLOLOLOLOLOLOLOLOL",
-		"username": "Last.fm Audio Bot",
-		"icon": ":lastfm:"
+		"token": "xoxb-...",
+		"channel": "Cxxxxxxxx",
+		"as_user": true,
+		"username": "bot-lastfm",
+		"bot_id": "Bxxxxxxxx",
+		"bot_user_id": "Uxxxxxxxx"
 	}
 }

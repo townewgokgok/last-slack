@@ -3,7 +3,7 @@
 const request = require("request");
 const config = require("./config.json");
 let currentTrack = null;
-let lastTs = Math.floor(new Date().getTime() / 1000) - 60*60;
+let lastTs = Math.floor(new Date().getTime() / 1000) - 60*60*24;
 
 const Slack = require('slack-node');
 let slack = new Slack(config.slack.token);
@@ -110,8 +110,6 @@ function removeMessages(messages, callback) {
 	slack.api('chat.delete', param, (err, res)=>{
 		if (err||!res.ok) {
 			console.error(err||res);
-			if (callback) callback(err||res);
-			return;
 		}
 		removeMessages(messages, callback);
 	});
